@@ -691,7 +691,7 @@ class OrcaHand:
             else:
                 raise ValueError("desired_pos must be a dict, np.ndarray, or list.")
    
-            self._dxl_client.write_desired_pos(motor_ids_to_write, positions_to_write)
+            self._dxl_client.write_desired_pos(motor_ids_to_write, positions_to_write) # TODO: the key realization on motor position wrapping
     
     def _motor_to_joint_pos(self, motor_pos: np.ndarray) -> dict:
         """Convert motor positions into joint positions.

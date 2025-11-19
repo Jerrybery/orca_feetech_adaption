@@ -5,7 +5,7 @@
 # You may use, copy, modify, and distribute this file under the terms of the MIT License.
 # See the LICENSE file at the root of this repository for full license information.
 # ==============================================================================
-
+import scservo_sdk
 import os
 import yaml
 import numpy as np
