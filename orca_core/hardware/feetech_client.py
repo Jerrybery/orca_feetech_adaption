@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Communication using the DynamixelSDK."""
+"""Communication using the FeetechSDK."""
 
 import atexit
 import logging
@@ -20,10 +20,11 @@ import time
 from typing import Optional, Sequence, Union, Tuple
 import numpy as np
 
-PROTOCOL_VERSION = 2.0
+PROTOCOL_VERSION = 0 # FeetechSDK protocol for Little-Endian
 
 # The following addresses assume XH motors.
-# see https://emanual.robotis.com/docs/en/dxl/x/xc330-t288/ for control table
+# see https://emanual.robotis.com/docs/en/ft/x/xc330-t288/ for control table
+# TOFIX: Adapt to Feetech Address and Data Byte Length
 ADDR_OPERATING_MODE = 11
 ADDR_TORQUE_ENABLE = 64
 ADDR_GOAL_POSITION = 116
@@ -51,14 +52,14 @@ LEN_MOVING_STATUS = 1
 LEN_PRESENT_TEMPERATURE = 1
 
 DEFAULT_POS_SCALE = 2.0 * np.pi / 4096  # 0.088 degrees
-# See http://emanual.robotis.com/docs/en/dxl/x/xh430-v210/#goal-velocity
+# See http://emanual.robotis.com/docs/en/ft/x/xh430-v210/#goal-velocity
 DEFAULT_VEL_SCALE = 0.229 * 2.0 * np.pi / 60.0  # 0.229 rpm
 DEFAULT_CUR_SCALE = 1.34
 
 
-def dynamixel_cleanup_handler():
-    """Cleanup function to ensure Dynamixels are disconnected properly."""
-    open_clients = list(DynamixelClient.OPEN_CLIENTS)
+def Feetech_cleanup_handler():
+    """Cleanup function to ensure Feetechs are disconnected properly."""
+    open_clients = list(FeetechClient.OPEN_CLIENTS)
     for open_client in open_clients:
         if open_client.port_handler.is_using:
             logging.warning('Forcing client to close.')
@@ -83,8 +84,8 @@ def unsigned_to_signed(value: int, size: int) -> int:
     return value
 
 
-class DynamixelClient:
-    """Client for communicating with Dynamixel motors.
+class FeetechClient:
+    """Client for communicating with Feetech motors.
 
     NOTE: This only supports Protocol 2. # TODO: clarify what is the protocol 2
     """
@@ -104,11 +105,11 @@ class DynamixelClient:
 
         Args:
             motor_ids: All motor IDs being used by the client.
-            port: The Dynamixel device to talk to. e.g.
+            port: The Feetech device to talk to. e.g.
                 - Linux: /dev/ttyUSB0
                 - Mac: /dev/tty.usbserial-*
                 - Windows: COM1
-            baudrate: The Dynamixel baudrate to communicate with.
+            baudrate: The Feetech baudrate to communicate with.
             lazy_connect: If True, automatically connects when calling a method
                 that requires a connection, if not already connected.
             pos_scale: The scaling factor for the positions. This is
@@ -118,18 +119,18 @@ class DynamixelClient:
             cur_scale: The scaling factor for the currents. This is
                 motor-dependent. If not provided uses the default scale.
         """
-        import dynamixel_sdk
-        self.dxl = dynamixel_sdk
+        import scservo_sdk
+        self.ft = scservo_sdk
 
         self.motor_ids = list(motor_ids)
         self.port_name = port
         self.baudrate = baudrate
         self.lazy_connect = lazy_connect
 
-        self.port_handler = self.dxl.PortHandler(port)
-        self.packet_handler = self.dxl.PacketHandler(PROTOCOL_VERSION)
+        self.port_handler = self.ft.PortHandler(port)
+        self.packet_handler = self.ft.PacketHandler(PROTOCOL_VERSION)
 
-        self._pos_vel_cur_reader = DynamixelPosVelCurReader(
+        self._pos_vel_cur_reader = FeetechPosVelCurReader(
             self,
             self.motor_ids,
             pos_scale=pos_scale if pos_scale is not None else DEFAULT_POS_SCALE,
@@ -137,14 +138,14 @@ class DynamixelClient:
             cur_scale=cur_scale if cur_scale is not None else DEFAULT_CUR_SCALE,
         )
         
-        self._temp_reader = DynamixelTempReader(
+        self._temp_reader = FeetechTempReader(
             self,
             self.motor_ids,
             address=ADDR_PRESENT_TEMPERATURE,
             size=LEN_PRESENT_TEMPERATURE,
         )
         
-        self._moving_status_reader = DynamixelReader(self, self.motor_ids, ADDR_MOVING_STATUS, LEN_MOVING_STATUS)
+        self._moving_status_reader = FeetechReader(self, self.motor_ids, ADDR_MOVING_STATUS, LEN_MOVING_STATUS)
         self._sync_writers = {}
 
         self.OPEN_CLIENTS.add(self)
@@ -154,9 +155,9 @@ class DynamixelClient:
         return self.port_handler.is_open
 
     def connect(self):
-        """Connects to the Dynamixel motors.
+        """Connects to the Feetech motors.
 
-        NOTE: This should be called after all DynamixelClients on the same
+        NOTE: This should be called after all FeetechClients on the same
             process are created.
         """
         assert not self.is_connected, 'Client is already connected.'
@@ -179,7 +180,7 @@ class DynamixelClient:
         self.set_torque_enabled(self.motor_ids, True)
 
     def disconnect(self):
-        """Disconnects from the Dynamixel device."""
+        """Disconnects from the Feetech device."""
         if not self.is_connected:
             return
         if self.port_handler.is_using:
@@ -223,7 +224,7 @@ class DynamixelClient:
 
     def set_operating_mode(self, motor_ids: Sequence[int], mode_value: int):
         """
-        see https://emanual.robotis.com/docs/en/dxl/x/xc330-t288/#operating-mode11
+        see https://emanual.robotis.com/docs/en/ft/x/xc330-t288/#operating-mode11
         0: current control mode
         1: velocity control mode
         3: position control mode
@@ -258,7 +259,7 @@ class DynamixelClient:
         """
         assert len(motor_ids) == len(positions)
 
-        # Convert to Dynamixel position space.
+        # Convert to Feetech position space.
         positions = positions / self._pos_vel_cur_reader.pos_scale
         times = self.sync_write(motor_ids, positions, ADDR_GOAL_POSITION,
                         LEN_GOAL_POSITION) # TODO: does scs-sdk support sync_write api?
@@ -292,10 +293,10 @@ class DynamixelClient:
         self.check_connected()
         errored_ids = []
         for motor_id in motor_ids:
-            comm_result, dxl_error = self.packet_handler.write1ByteTxRx(
+            comm_result, ft_error = self.packet_handler.write1ByteTxRx(
                 self.port_handler, motor_id, address, value)
             success = self.handle_packet_result(
-                comm_result, dxl_error, motor_id, context='write_byte')
+                comm_result, ft_error, motor_id, context='write_byte')
             if not success:
                 errored_ids.append(motor_id)
         return errored_ids
@@ -315,7 +316,7 @@ class DynamixelClient:
         self.check_connected()
         key = (address, size)
         if key not in self._sync_writers:
-            self._sync_writers[key] = self.dxl.GroupSyncWrite(
+            self._sync_writers[key] = self.ft.GroupSyncWrite(
                 self.port_handler, self.packet_handler, address, size)
         sync_writer = self._sync_writers[key]
         times.append(time.monotonic())
@@ -348,19 +349,19 @@ class DynamixelClient:
 
     def handle_packet_result(self,
                              comm_result: int,
-                             dxl_error: Optional[int] = None,
-                             dxl_id: Optional[int] = None,
+                             ft_error: Optional[int] = None,
+                             ft_id: Optional[int] = None,
                              context: Optional[str] = None):
         """Handles the result from a communication request."""
         error_message = None
-        if comm_result != self.dxl.COMM_SUCCESS:
+        if comm_result != self.ft.COMM_SUCCESS:
             error_message = self.packet_handler.getTxRxResult(comm_result)
-        elif dxl_error is not None:
-            error_message = self.packet_handler.getRxPacketError(dxl_error)
+        elif ft_error is not None:
+            error_message = self.packet_handler.getRxPacketError(ft_error)
         if error_message:
-            if dxl_id is not None:
+            if ft_id is not None:
                 error_message = '[Motor ID: {}] {}'.format(
-                    dxl_id, error_message)
+                    ft_id, error_message)
             if context is not None:
                 error_message = '> {}: {}'.format(context, error_message)
             logging.error(error_message)
@@ -389,13 +390,13 @@ class DynamixelClient:
         self.disconnect()
 
 
-class DynamixelReader:
-    """Reads data from Dynamixel motors.
+class FeetechReader:
+    """Reads data from Feetech motors.
 
-    This wraps a GroupBulkRead from the DynamixelSDK.
+    This wraps a GroupBulkRead from the FeetechSDK.
     """
 
-    def __init__(self, client: DynamixelClient, motor_ids: Sequence[int],
+    def __init__(self, client: FeetechClient, motor_ids: Sequence[int],
                  address: int, size: int):
         """Initializes a new reader."""
         self.client = client
@@ -404,11 +405,13 @@ class DynamixelReader:
         self.size = size
         self._initialize_data()
 
-        self.operation = self.client.dxl.GroupBulkRead(client.port_handler,
-                                                       client.packet_handler)
+        self.operation = self.client.ft.GroupSyncRead(client.port_handler,
+                                                       client.packet_handler,
+                                                       start_address=address,
+                                                       data_length=size) # TOFIX: find out the sync/bulk read difference in hand instance
 
         for motor_id in motor_ids:
-            success = self.operation.addParam(motor_id, address, size)
+            success = self.operation.addParam(motor_id)
             if not success:
                 raise OSError(
                     '[Motor ID: {}] Could not add parameter to bulk read.'
@@ -464,11 +467,11 @@ class DynamixelReader:
         return self._data.copy()
 
 
-class DynamixelPosVelCurReader(DynamixelReader):
+class FeetechPosVelCurReader(FeetechReader):
     """Reads positions and velocities."""
 
     def __init__(self,
-                 client: DynamixelClient,
+                 client: FeetechClient,
                  motor_ids: Sequence[int],
                  pos_scale: float = 1.0,
                  vel_scale: float = 1.0,
@@ -509,8 +512,8 @@ class DynamixelPosVelCurReader(DynamixelReader):
         return (self._pos_data.copy(), self._vel_data.copy(),
                 self._cur_data.copy())
 
-class DynamixelTempReader(DynamixelReader):
-    """Reads present temperature (1 byte) for each Dynamixel motor."""
+class FeetechTempReader(FeetechReader):
+    """Reads present temperature (1 byte) for each Feetech motor."""
     
     def _initialize_data(self):
         # We'll store one float per motor for the temperature values.
@@ -525,7 +528,7 @@ class DynamixelTempReader(DynamixelReader):
         return self._temp_data.copy()
 
 # Register global cleanup function.
-atexit.register(dynamixel_cleanup_handler)
+atexit.register(Feetech_cleanup_handler)
 
 if __name__ == '__main__':
     import argparse
@@ -541,7 +544,7 @@ if __name__ == '__main__':
         '-d',
         '--device',
         default='/dev/cu.usbserial-FT62AFSR',
-        help='The Dynamixel device to connect to.')
+        help='The Feetech device to connect to.')
     parser.add_argument(
         '-b', '--baud', default=1000000, help='The baudrate to connect with.')
     parsed_args = parser.parse_args()
@@ -549,15 +552,15 @@ if __name__ == '__main__':
     
     way_points = [np.zeros(len(motors)), np.full(len(motors), np.pi)]
 
-    with DynamixelClient(motors, parsed_args.device,
-                         parsed_args.baud) as dxl_client:
+    with FeetechClient(motors, parsed_args.device,
+                         parsed_args.baud) as ft_client:
         for step in itertools.count():
             if step > 0 and step % 50 == 0:
                 way_point = way_points[(step // 100) % len(way_points)]
                 print('Writing: {}'.format(way_point.tolist()))
-                dxl_client.write_desired_pos(motors, way_point)
+                ft_client.write_desired_pos(motors, way_point)
             read_start = time.time()
-            pos_now, vel_now, cur_now = dxl_client.read_pos_vel_cur()
+            pos_now, vel_now, cur_now = ft_client.read_pos_vel_cur()
             if step % 5 == 0:
                 print('[{}] Frequency: {:.2f} Hz'.format(
                     step, 1.0 / (time.time() - read_start)))

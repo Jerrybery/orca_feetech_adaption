@@ -15,6 +15,7 @@ from collections import deque
 from threading import RLock
 import numpy as np
 from .hardware.dynamixel_client import DynamixelClient
+from .hardware.feetech_client import FeetechClient
 from .hardware.mock_dynamixel_client import MockDynamixelClient
 from .utils.utils import *
 
@@ -83,7 +84,8 @@ class OrcaHand:
 
         self._wrap_offsets_dict: Dict[int, float] = None
 
-        self._dxl_client: DynamixelClient = None
+        self._motor_type = config.get('motor', None)
+
         self._motor_lock: RLock = RLock()
 
         # Task thread to start and stop longer tasks like tensioning, calibration, etc. externally
@@ -100,18 +102,21 @@ class OrcaHand:
         self.disconnect()
         
     def connect(self) -> tuple[bool, str]:
-        """Connect to the hand with the DynamixelClient.
+        """Connect to the hand with the DynamixelClient/FeetechClient.
 
         Returns:
             tuple[bool, str]: (Success status, message).
         """
         try:
-            self._dxl_client = DynamixelClient(self.motor_ids, self.port, self.baudrate)
+            if self._motor_type == 'feetech':
+                self._motor_client = FeetechClient(self.motor_ids, self.port, self.baudrate)
+            else:
+                self._motor_client = DynamixelClient(self.motor_ids, self.port, self.baudrate)
             with self._motor_lock:
-                self._dxl_client.connect()
+                self._motor_client.connect()
             return True, "Connection successful"
         except Exception as e:
-            self._dxl_client = None
+            self._motor_client = None
             return False, f"Connection failed: {str(e)}"
         
     def disconnect(self) -> tuple[bool, str]:
@@ -124,7 +129,7 @@ class OrcaHand:
             with self._motor_lock:
                 self.disable_torque()
                 time.sleep(0.1)
-                self._dxl_client.disconnect()
+                self._motor_client.disconnect()
             return True, "Disconnected successfully"
         except Exception as e:
             return False, f"Disconnection failed: {str(e)}"
@@ -135,7 +140,7 @@ class OrcaHand:
         Returns:
             bool: True if connected, False otherwise.
         """
-        return self._dxl_client.is_connected if self._dxl_client else False
+        return self._motor_client.is_connected if self._motor_client else False
         
     def enable_torque(self, motor_ids: List[int] = None):
         """Enable torque for the motors.
@@ -146,7 +151,7 @@ class OrcaHand:
         if motor_ids is None:
             motor_ids = self.motor_ids
         with self._motor_lock:
-            self._dxl_client.set_torque_enabled(motor_ids, True)        
+            self._motor_client.set_torque_enabled(motor_ids, True)        
 
     def disable_torque(self, motor_ids: List[int] = None):
         """Disable torque for the motors.
@@ -157,7 +162,7 @@ class OrcaHand:
         if motor_ids is None:
             motor_ids = self.motor_ids
         with self._motor_lock:
-            self._dxl_client.set_torque_enabled(motor_ids, False)
+            self._motor_client.set_torque_enabled(motor_ids, False)
     
     def set_max_current(self, current: Union[float, List[float]]):
         """Set the maximum current for the motors.
@@ -169,10 +174,10 @@ class OrcaHand:
             if len(current) != len(self.motor_ids):
                 raise ValueError("Number of currents do not match the number of motors.")
             with self._motor_lock:
-                self._dxl_client.write_desired_current(self.motor_ids, current)
+                self._motor_client.write_desired_current(self.motor_ids, current)
         else:
             with self._motor_lock:
-                self._dxl_client.write_desired_current(self.motor_ids, current*np.ones(len(self.motor_ids)))
+                self._motor_client.write_desired_current(self.motor_ids, current*np.ones(len(self.motor_ids)))
         
     def set_control_mode(self, mode: str, motor_ids: List[int] = None):
         """Set the control mode for the motors.
@@ -205,7 +210,7 @@ class OrcaHand:
             else:
                 if not all(motor_id in self.motor_ids for motor_id in motor_ids):
                     raise ValueError("Invalid motor IDs.")
-            self._dxl_client.set_operating_mode(motor_ids, mode)
+            self._motor_client.set_operating_mode(motor_ids, mode)
             
     def get_motor_pos(self, as_dict: bool = False) -> Union[np.ndarray, dict]:
         """Get the current motor positions in radians (Note that this includes offsets of the motors).
@@ -218,7 +223,7 @@ class OrcaHand:
             Union[np.ndarray, dict]: Motor positions either as numpy array or dictionary {motor_id: position}.
         """
         with self._motor_lock:
-            motor_pos = self._dxl_client.read_pos_vel_cur()[0]
+            motor_pos = self._motor_client.read_pos_vel_cur()[0]
             if as_dict:
                 return {motor_id: pos for motor_id, pos in zip(self.motor_ids, motor_pos)}
             return motor_pos
@@ -228,13 +233,13 @@ class OrcaHand:
         
         Args:
             as_dict (bool): If True, return the motor currents as a dictionary with motor IDs as keys.
-                           If False, return as numpy array.
+                           If False00, return as numpy array.
         
         Returns:
             Union[np.ndarray, dict]: Motor currents either as numpy array or dictionary {motor_id: current}.
         """
         with self._motor_lock:
-            motor_current = self._dxl_client.read_pos_vel_cur()[2]
+            motor_current = self._motor_client.read_pos_vel_cur()[2]
             if as_dict:
                 return {motor_id: current for motor_id, current in zip(self.motor_ids, motor_current)}
             return motor_current
@@ -250,7 +255,7 @@ class OrcaHand:
             Union[np.ndarray, dict]: Motor temperatures either as numpy array or dictionary {motor_id: temperature}.
         """
         with self._motor_lock:
-            motor_temp = self._dxl_client.read_temperature()
+            motor_temp = self._motor_client.read_temperature()
             if as_dict:
                 return {motor_id: temp for motor_id, temp in zip(self.motor_ids, motor_temp)}
             return motor_temp
@@ -691,7 +696,7 @@ class OrcaHand:
             else:
                 raise ValueError("desired_pos must be a dict, np.ndarray, or list.")
    
-            self._dxl_client.write_desired_pos(motor_ids_to_write, positions_to_write) # TODO: the key realization on motor position wrapping
+            self._motor_client.write_desired_pos(motor_ids_to_write, positions_to_write) # TODO: the key realization on motor position wrapping
     
     def _motor_to_joint_pos(self, motor_pos: np.ndarray) -> dict:
         """Convert motor positions into joint positions.
@@ -913,12 +918,12 @@ class MockOrcaHand(OrcaHand):
                               and a string message.
         """
         try:
-            self._dxl_client = MockDynamixelClient(self.motor_ids, self.port, self.baudrate)
+            self._motor_client = MockDynamixelClient(self.motor_ids, self.port, self.baudrate)
             with self._motor_lock:
-                self._dxl_client.connect()
+                self._motor_client.connect()
             return True, "Mock connection successful"
         except Exception as e:
-            self._dxl_client = None
+            self._motor_client = None
             return False, f"Mock connection failed: {str(e)}"
         
     
