@@ -25,29 +25,29 @@ PROTOCOL_VERSION = 0 # FeetechSDK protocol for Little-Endian
 # The following addresses assume XH motors.
 # see https://emanual.robotis.com/docs/en/ft/x/xc330-t288/ for control table
 # TOFIX: Adapt to Feetech Address and Data Byte Length
-ADDR_OPERATING_MODE = 11
-ADDR_TORQUE_ENABLE = 64
-ADDR_GOAL_POSITION = 116
+ADDR_OPERATING_MODE = 0x21
+ADDR_TORQUE_ENABLE = 0x28
+ADDR_GOAL_POSITION = 0x2A
 ADDR_GOAL_PWM = 100
-ADDR_GOAL_CURRENT = 102
-ADDR_PROFILE_VELOCITY = 112
-ADDR_PRESENT_POSITION = 132
-ADDR_PRESENT_VELOCITY = 128
-ADDR_PRESENT_CURRENT = 126
+ADDR_GOAL_CURRENT = 0x1C
+ADDR_PROFILE_VELOCITY = 0x2E
+ADDR_PRESENT_POSITION = 0x38
+ADDR_PRESENT_VELOCITY = 0x3A
+ADDR_PRESENT_CURRENT = 0x45
 ADDR_PRESENT_POS_VEL_CUR = 126
-ADDR_MOVING_STATUS = 123
-ADDR_PRESENT_TEMPERATURE = 146
+ADDR_MOVING_STATUS = 0x42
+ADDR_PRESENT_TEMPERATURE = 0x3F
 
 # Data Byte Length
 LEN_OPERATING_MODE = 1
-LEN_PRESENT_POSITION = 4
-LEN_PRESENT_VELOCITY = 4
+LEN_PRESENT_POSITION = 2
+LEN_PRESENT_VELOCITY = 2
 LEN_PRESENT_CURRENT = 2
 LEN_PRESENT_POS_VEL_CUR = 10
-LEN_GOAL_POSITION = 4
+LEN_GOAL_POSITION = 2
 LEN_GOAL_PWM = 2
 LEN_GOAL_CURRENT = 2
-LEN_PROFILE_VELOCITY = 4
+LEN_PROFILE_VELOCITY = 2
 LEN_MOVING_STATUS = 1
 LEN_PRESENT_TEMPERATURE = 1
 
@@ -233,7 +233,7 @@ class FeetechClient:
         """
         # data in EEPROM area can only be written when torque is disabled
         self.set_torque_enabled(motor_ids, False)
-        self.sync_write(motor_ids, [mode_value]*len(motor_ids), ADDR_OPERATING_MODE, LEN_OPERATING_MODE)
+        self.sync_write(motor_ids, [mode_value]*len(motor_ids), ADDR_OPERATING_MODE, LEN_OPERATING_MODE) # ADDR_OPERATING_MODE is the address of operating mode in EEPROM area
         self.set_torque_enabled(motor_ids, True)
 
     def read_pos_vel_cur(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -467,7 +467,7 @@ class FeetechReader:
         return self._data.copy()
 
 
-class FeetechPosVelCurReader(FeetechReader):
+class FeetechPosVelCurReader():
     """Reads positions and velocities."""
 
     def __init__(self,
@@ -476,11 +476,24 @@ class FeetechPosVelCurReader(FeetechReader):
                  pos_scale: float = 1.0,
                  vel_scale: float = 1.0,
                  cur_scale: float = 1.0):
-        super().__init__(
+        self.motor_ids = motor_ids
+        self.vel_reader = FeetechReader(
             client,
             motor_ids,
-            address=ADDR_PRESENT_POS_VEL_CUR,
-            size=LEN_PRESENT_POS_VEL_CUR,
+            address=ADDR_PRESENT_VELOCITY,
+            size=LEN_PRESENT_VELOCITY,
+        )
+        self.pos_reader = FeetechReader(
+            client,
+            motor_ids,
+            address=ADDR_PRESENT_POSITION,
+            size=LEN_PRESENT_POSITION,
+        )
+        self.cur_reader = FeetechReader(
+            client,
+            motor_ids,
+            address=ADDR_PRESENT_CURRENT,
+            size=LEN_PRESENT_CURRENT,
         )
         self.pos_scale = pos_scale
         self.vel_scale = vel_scale
@@ -494,11 +507,11 @@ class FeetechPosVelCurReader(FeetechReader):
 
     def _update_data(self, index: int, motor_id: int):
         """Updates the data index for the given motor ID."""
-        cur = self.operation.getData(motor_id, ADDR_PRESENT_CURRENT,
+        cur = self.cur_reader.operation.getData(motor_id, ADDR_PRESENT_CURRENT,
                                      LEN_PRESENT_CURRENT)
-        vel = self.operation.getData(motor_id, ADDR_PRESENT_VELOCITY,
+        vel = self.vel_reader.operation.getData(motor_id, ADDR_PRESENT_VELOCITY,
                                      LEN_PRESENT_VELOCITY)
-        pos = self.operation.getData(motor_id, ADDR_PRESENT_POSITION,
+        pos = self.pos_reader.operation.getData(motor_id, ADDR_PRESENT_POSITION,
                                      LEN_PRESENT_POSITION)
         cur = unsigned_to_signed(cur, size=2)
         vel = unsigned_to_signed(vel, size=4)
