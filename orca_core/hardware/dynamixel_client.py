@@ -509,6 +509,9 @@ class DynamixelPosVelCurReader(DynamixelReader):
         return (self._pos_data.copy(), self._vel_data.copy(),
                 self._cur_data.copy())
 
+    def read(self):
+        return self._get_data()
+
 class DynamixelTempReader(DynamixelReader):
     """Reads present temperature (1 byte) for each Dynamixel motor."""
     
