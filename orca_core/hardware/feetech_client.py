@@ -37,6 +37,8 @@ ADDR_PRESENT_CURRENT = 0x45
 ADDR_PRESENT_POS_VEL_CUR = 126
 ADDR_MOVING_STATUS = 0x42
 ADDR_PRESENT_TEMPERATURE = 0x3F
+ADDR_MOVING_VELOCITY = 0X2E
+ADDR_MOVING_ACCELERATION = 0X29
 
 # Data Byte Length
 LEN_OPERATING_MODE = 1
@@ -50,6 +52,9 @@ LEN_GOAL_CURRENT = 2
 LEN_PROFILE_VELOCITY = 2
 LEN_MOVING_STATUS = 1
 LEN_PRESENT_TEMPERATURE = 1
+LEN_MOVING_VELOCITY = 2
+LEN_MOVING_ACCELERATION = 1
+LEN_TORQUE_ENABLE = 1
 
 DEFAULT_POS_SCALE = 2.0 * np.pi / 4096  # 0.088 degrees
 # See http://emanual.robotis.com/docs/en/ft/x/xh430-v210/#goal-velocity
@@ -194,7 +199,7 @@ class FeetechClient:
 
     def set_torque_enabled(self,
                            motor_ids: Sequence[int],
-                           enabled: bool,
+                           enabled: bool = True,
                            retries: int = -1,
                            retry_interval: float = 0.25):
         """Sets whether torque is enabled for the motors.
@@ -207,20 +212,14 @@ class FeetechClient:
             retry_interval: The number of seconds to wait between retries.
         """
         remaining_ids = list(motor_ids)
-        while remaining_ids:
-            remaining_ids = self.write_byte(
-                remaining_ids,
-                int(enabled),
-                ADDR_TORQUE_ENABLE,
-            )
-            if remaining_ids:
-                logging.error('Could not set torque %s for IDs: %s',
-                              'enabled' if enabled else 'disabled',
-                              str(remaining_ids))
-            if retries == 0:
-                break
-            time.sleep(retry_interval)
-            retries -= 1
+        if enabled:
+            self.sync_write(remaining_ids, [10]*len(remaining_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
+            self.sync_write(remaining_ids, [10]*len(remaining_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
+            self.sync_write(remaining_ids, [1]*len(remaining_ids), ADDR_TORQUE_ENABLE, LEN_TORQUE_ENABLE) # Torque for feetech
+        else:
+            self.sync_write(remaining_ids, [0]*len(remaining_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
+            self.sync_write(remaining_ids, [0]*len(remaining_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
+            self.sync_write(remaining_ids, [0]*len(remaining_ids), ADDR_TORQUE_ENABLE, LEN_TORQUE_ENABLE) # Torque for feetech
 
     def set_operating_mode(self, motor_ids: Sequence[int], mode_value: int):
         """
@@ -261,8 +260,12 @@ class FeetechClient:
 
         # Convert to Feetech position space.
         positions = positions / self._pos_vel_cur_reader.pos_scale
+
+        self.sync_write(motor_ids, [10]*len(motor_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
+        self.sync_write(motor_ids, [10]*len(motor_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
+
         times = self.sync_write(motor_ids, positions, ADDR_GOAL_POSITION,
-                        LEN_GOAL_POSITION) # TODO: does scs-sdk support sync_write api?
+                        LEN_GOAL_POSITION) 
         return times
 
     def write_desired_current(self, motor_ids: Sequence[int], current: np.ndarray):
@@ -355,7 +358,7 @@ class FeetechClient:
         """Handles the result from a communication request."""
         error_message = None
         if comm_result != self.ft.COMM_SUCCESS:
-            error_message = self.packet_handler.getTxRxResult(comm_result)
+            error_message = self.packet_handler.getTxRxResult(comm_result) 
         elif ft_error is not None:
             error_message = self.packet_handler.getRxPacketError(ft_error)
         if error_message:
@@ -495,6 +498,7 @@ class FeetechPosVelCurReader():
             address=ADDR_PRESENT_CURRENT,
             size=LEN_PRESENT_CURRENT,
         )
+        self._initialize_data()
         self.pos_scale = pos_scale
         self.vel_scale = vel_scale
         self.cur_scale = cur_scale
@@ -521,9 +525,19 @@ class FeetechPosVelCurReader():
         self._cur_data[index] = float(cur) * self.cur_scale
 
     def _get_data(self):
+        for index, motor_id in enumerate(self.motor_ids):
+            try:
+                self._update_data(index, motor_id)
+            except Exception as e:
+                logging.error(f'Error updating data for motor {motor_id}: {e}')
+                return(self._pos_data.copy(), self._vel_data.copy(),
+                        self._cur_data.copy())
         """Returns a copy of the data."""
         return (self._pos_data.copy(), self._vel_data.copy(),
                 self._cur_data.copy())
+    
+    def read(self):
+        return self._get_data()
 
 class FeetechTempReader(FeetechReader):
     """Reads present temperature (1 byte) for each Feetech motor."""

@@ -34,7 +34,6 @@ class MaxCurrent(BaseModel):
 class JointPositions(BaseModel):
     positions: Dict[str, float] = Field(..., example={"index_flex": 0.5, "thumb_flex": 0.2})
 
-
 def handle_hand_exception(e: Exception):
     """Translates OrcaHand runtime errors to HTTP exceptions."""
     if isinstance(e, RuntimeError):

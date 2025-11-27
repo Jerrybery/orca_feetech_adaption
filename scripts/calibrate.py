@@ -14,7 +14,7 @@ def main():
     # )
     # args = parser.parse_args()
 
-    hand = OrcaHand("orca_core/models/test")
+    hand = OrcaHand("orca_core/models/orcahand_v1_left")
     status = hand.connect()
     print(status)
 

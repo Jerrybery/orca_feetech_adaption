@@ -84,7 +84,7 @@ class OrcaHand:
 
         self._wrap_offsets_dict: Dict[int, float] = None
 
-        self._motor_type = config.get('motor', None)
+        self._motor_type = "feetech" # currently hardcoded to be feetech
 
         self._motor_lock: RLock = RLock()
 
@@ -193,11 +193,10 @@ class OrcaHand:
         """
         
         mode_map = {
-            'current': 0,
-            'velocity': 1,
-            'position': 3,
-            'multi_turn_position': 4,
-            'current_based_position': 5
+            'position': 0,
+            'const_speed': 1,
+            'PWM': 2,
+            'step_motor': 3,
         }
 
         mode = mode_map.get(mode)
@@ -434,7 +433,7 @@ class OrcaHand:
                 self._wrap_offsets_dict[motor_id] = 0.0
 
         # Set calibration control mode
-        self.set_control_mode('current_based_position')
+        self.set_control_mode('const_speed')
         self.set_max_current(self.calib_current)
         self.enable_torque()
         
@@ -696,9 +695,9 @@ class OrcaHand:
             else:
                 raise ValueError("desired_pos must be a dict, np.ndarray, or list.")
    
-            self._motor_client.write_desired_pos(motor_ids_to_write, positions_to_write) # TODO: the key realization on motor position wrapping
+            self._motor_client.write_desired_pos(motor_ids_to_write, positions_to_write) 
     
-    def _motor_to_joint_pos(self, motor_pos: np.ndarray) -> dict:
+    def _motor_to_joint_pos(self, motor_pos: np.ndarray) -> dict: # TODO
         """Convert motor positions into joint positions.
         
         Args:
@@ -821,7 +820,7 @@ class OrcaHand:
         Args:
             move_motors (bool): If True, the hand will move to all motors positively for 3 seconds to set some initial tension.
         """
-        self.set_control_mode('current_based_position')
+        self.set_control_mode('const_speed')
         if move_motors:
             motors_to_move = [
                 motor_id for joint, motor_id in self.joint_to_motor_map.items()
