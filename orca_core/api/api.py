@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Union, Tuple
 import numpy as np
 import uvicorn
-from orca_core.utils.yaml_utils import read_yaml, update_yaml
+from orca_core.utils import read_yaml, update_yaml
 
 from orca_core import OrcaHand
 

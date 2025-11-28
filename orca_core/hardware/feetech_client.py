@@ -57,7 +57,6 @@ LEN_MOVING_ACCELERATION = 1
 LEN_TORQUE_ENABLE = 1
 
 DEFAULT_POS_SCALE = 2.0 * np.pi / 4096  # 0.088 degrees
-# See http://emanual.robotis.com/docs/en/ft/x/xh430-v210/#goal-velocity
 DEFAULT_VEL_SCALE = 0.229 * 2.0 * np.pi / 60.0  # 0.229 rpm
 DEFAULT_CUR_SCALE = 1.34
 
@@ -127,6 +126,10 @@ class FeetechClient:
         import scservo_sdk
         self.ft = scservo_sdk
 
+        self._pos_scale = pos_scale or DEFAULT_POS_SCALE
+        self._vel_scale = vel_scale or DEFAULT_VEL_SCALE
+        self._cur_scale = cur_scale or DEFAULT_CUR_SCALE
+
         self.motor_ids = list(motor_ids)
         self.port_name = port
         self.baudrate = baudrate
@@ -135,19 +138,24 @@ class FeetechClient:
         self.port_handler = self.ft.PortHandler(port)
         self.packet_handler = self.ft.PacketHandler(PROTOCOL_VERSION)
 
-        self._pos_vel_cur_reader = FeetechPosVelCurReader(
-            self,
-            self.motor_ids,
-            pos_scale=pos_scale if pos_scale is not None else DEFAULT_POS_SCALE,
-            vel_scale=vel_scale if vel_scale is not None else DEFAULT_VEL_SCALE,
-            cur_scale=cur_scale if cur_scale is not None else DEFAULT_CUR_SCALE,
-        )
         
         self._temp_reader = FeetechTempReader(
             self,
             self.motor_ids,
             address=ADDR_PRESENT_TEMPERATURE,
             size=LEN_PRESENT_TEMPERATURE,
+        )
+        self._position_reader = FeetechPosReader(
+            self,
+            self.motor_ids,
+            address=ADDR_PRESENT_POSITION,
+            size=LEN_PRESENT_POSITION,
+        )
+        self._current_reader = FeetechCurrentReader(
+            self,
+            self.motor_ids,
+            address=ADDR_PRESENT_CURRENT,
+            size=LEN_PRESENT_CURRENT,
         )
         
         self._moving_status_reader = FeetechReader(self, self.motor_ids, ADDR_MOVING_STATUS, LEN_MOVING_STATUS)
@@ -213,12 +221,8 @@ class FeetechClient:
         """
         remaining_ids = list(motor_ids)
         if enabled:
-            self.sync_write(remaining_ids, [10]*len(remaining_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
-            self.sync_write(remaining_ids, [10]*len(remaining_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
             self.sync_write(remaining_ids, [1]*len(remaining_ids), ADDR_TORQUE_ENABLE, LEN_TORQUE_ENABLE) # Torque for feetech
         else:
-            self.sync_write(remaining_ids, [0]*len(remaining_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
-            self.sync_write(remaining_ids, [0]*len(remaining_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
             self.sync_write(remaining_ids, [0]*len(remaining_ids), ADDR_TORQUE_ENABLE, LEN_TORQUE_ENABLE) # Torque for feetech
 
     def set_operating_mode(self, motor_ids: Sequence[int], mode_value: int):
@@ -235,10 +239,6 @@ class FeetechClient:
         self.sync_write(motor_ids, [mode_value]*len(motor_ids), ADDR_OPERATING_MODE, LEN_OPERATING_MODE) # ADDR_OPERATING_MODE is the address of operating mode in EEPROM area
         self.set_torque_enabled(motor_ids, True)
 
-    def read_pos_vel_cur(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Returns the positions, velocities, and currents."""
-        return self._pos_vel_cur_reader.read()
-
     def read_status_is_done_moving(self) -> bool:
         """Returns the last bit of moving status"""
         moving_status = self._moving_status_reader.read().astype(np.int8)
@@ -247,6 +247,16 @@ class FeetechClient:
     def read_temperature(self) -> np.ndarray:
         """Reads and returns the present temperature for each motor (in deg C)."""
         return self._temp_reader.read()
+    
+    def read_current(self) -> np.ndarray:
+        """Reads and returns the present current for each motor (in mA)."""
+        return self._current_reader.read()
+    
+    def read_position(self) -> np.ndarray:
+        """Reads and returns the present position for each motor (in radians)."""
+        return self._position_reader.read()
+
+
 
     def write_desired_pos(self, motor_ids: Sequence[int],
                           positions: np.ndarray):
@@ -259,13 +269,12 @@ class FeetechClient:
         assert len(motor_ids) == len(positions)
 
         # Convert to Feetech position space.
-        positions = positions / self._pos_vel_cur_reader.pos_scale
+        positions = positions / self._pos_scale
+        self.sync_write(motor_ids, [150]*len(motor_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
+        self.sync_write(motor_ids, [150]*len(motor_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
 
-        self.sync_write(motor_ids, [10]*len(motor_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
-        self.sync_write(motor_ids, [10]*len(motor_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
 
-        times = self.sync_write(motor_ids, positions, ADDR_GOAL_POSITION,
-                        LEN_GOAL_POSITION) 
+        times = self.sync_write(motor_ids, positions, ADDR_GOAL_POSITION, LEN_GOAL_POSITION) 
         return times
 
     def write_desired_current(self, motor_ids: Sequence[int], current: np.ndarray):
@@ -463,81 +472,41 @@ class FeetechReader:
     def _update_data(self, index: int, motor_id: int):
         """Updates the data index for the given motor ID."""
         self._data[index] = self.operation.getData(motor_id, self.address,
-                                                   self.size)
+                                                   self.size) * self.client._pos_scale
 
     def _get_data(self):
         """Returns a copy of the data."""
         return self._data.copy()
 
-
-class FeetechPosVelCurReader():
-    """Reads positions and velocities."""
-
-    def __init__(self,
-                 client: FeetechClient,
-                 motor_ids: Sequence[int],
-                 pos_scale: float = 1.0,
-                 vel_scale: float = 1.0,
-                 cur_scale: float = 1.0):
-        self.motor_ids = motor_ids
-        self.vel_reader = FeetechReader(
-            client,
-            motor_ids,
-            address=ADDR_PRESENT_VELOCITY,
-            size=LEN_PRESENT_VELOCITY,
-        )
-        self.pos_reader = FeetechReader(
-            client,
-            motor_ids,
-            address=ADDR_PRESENT_POSITION,
-            size=LEN_PRESENT_POSITION,
-        )
-        self.cur_reader = FeetechReader(
-            client,
-            motor_ids,
-            address=ADDR_PRESENT_CURRENT,
-            size=LEN_PRESENT_CURRENT,
-        )
-        self._initialize_data()
-        self.pos_scale = pos_scale
-        self.vel_scale = vel_scale
-        self.cur_scale = cur_scale
-
+class FeetechPosReader(FeetechReader):
+    """Reads present position (2 bytes) for each Feetech motor."""
+    
     def _initialize_data(self):
-        """Initializes the cached data."""
+        # We'll store one float per motor for the position values.
         self._pos_data = np.zeros(len(self.motor_ids), dtype=np.float32)
-        self._vel_data = np.zeros(len(self.motor_ids), dtype=np.float32)
-        self._cur_data = np.zeros(len(self.motor_ids), dtype=np.float32)
 
     def _update_data(self, index: int, motor_id: int):
-        """Updates the data index for the given motor ID."""
-        cur = self.cur_reader.operation.getData(motor_id, ADDR_PRESENT_CURRENT,
-                                     LEN_PRESENT_CURRENT)
-        vel = self.vel_reader.operation.getData(motor_id, ADDR_PRESENT_VELOCITY,
-                                     LEN_PRESENT_VELOCITY)
-        pos = self.pos_reader.operation.getData(motor_id, ADDR_PRESENT_POSITION,
-                                     LEN_PRESENT_POSITION)
-        cur = unsigned_to_signed(cur, size=2)
-        vel = unsigned_to_signed(vel, size=4)
-        pos = unsigned_to_signed(pos, size=4)
-        self._pos_data[index] = float(pos) * self.pos_scale
-        self._vel_data[index] = float(vel) * self.vel_scale
-        self._cur_data[index] = float(cur) * self.cur_scale
+        # 4096 => 2 pi
+        raw_val = self.operation.getData(motor_id, self.address, self.size)
+        self._pos_data[index] = float(raw_val) * self.client._pos_scale
 
     def _get_data(self):
-        for index, motor_id in enumerate(self.motor_ids):
-            try:
-                self._update_data(index, motor_id)
-            except Exception as e:
-                logging.error(f'Error updating data for motor {motor_id}: {e}')
-                return(self._pos_data.copy(), self._vel_data.copy(),
-                        self._cur_data.copy())
-        """Returns a copy of the data."""
-        return (self._pos_data.copy(), self._vel_data.copy(),
-                self._cur_data.copy())
+        return self._pos_data.copy()
+
+class FeetechCurrentReader(FeetechReader):
+    """Reads present current (2 bytes) for each Feetech motor."""
     
-    def read(self):
-        return self._get_data()
+    def _initialize_data(self):
+        # We'll store one float per motor for the temperature values.
+        self._current_data = np.zeros(len(self.motor_ids), dtype=np.float32)
+
+    def _update_data(self, index: int, motor_id: int):
+        # The raw value from the control table is 1 byte = 1 degree Celsius.
+        raw_val = self.operation.getData(motor_id, self.address, self.size)
+        self._current_data[index] = float(raw_val)
+
+    def _get_data(self):
+        return self._current_data.copy()
 
 class FeetechTempReader(FeetechReader):
     """Reads present temperature (1 byte) for each Feetech motor."""
