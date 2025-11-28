@@ -41,7 +41,7 @@ class OrcaHand:
         self.baudrate: int = config.get('baudrate', 3000000)
         self.port: str = config.get('port', '/dev/ttyUSB0')
         self.max_current: int = config.get('max_current', 300)
-        self.control_mode: str = config.get('control_mode', 'current_position')
+        self.control_mode: str = config.get('control_mode', 'position')
         self.type: str = config.get('type', None)
         
         self.calib_current: str = config.get('calib_current', 200)
@@ -373,9 +373,6 @@ class OrcaHand:
         self.set_control_mode(self.control_mode)
         self.set_max_current(self.max_current)
         
-        if not self.calibrated or calibrate:
-            self.calibrate()
-   
         self._compute_wrap_offsets_dict()
         self.set_joint_pos(self.neutral_position)
 
