@@ -203,6 +203,13 @@ class OrcaHand:
         if mode is None:
             raise ValueError("Invalid control mode.")
         
+        if mode == 3:
+            self._motor_client.sync_write(
+                motor_ids=self.motor_ids,
+                values=[0]*len(self.motor_ids),
+                address=0xB,
+                size=2,
+            )
         with self._motor_lock:
             if motor_ids is None:
                 motor_ids = self.motor_ids
@@ -224,7 +231,6 @@ class OrcaHand:
         with self._motor_lock:
             if self._motor_type == 'feetech':
                 motor_pos = self._motor_client.read_position()
-                time.sleep(0.01)
             else:
                 motor_pos = self._motor_client.read_pos_vel_cur()[0]
             if as_dict:
@@ -244,7 +250,6 @@ class OrcaHand:
         with self._motor_lock:
             if self._motor_type == 'feetech':
                 motor_current = self._motor_client.read_current()
-                time.sleep(0.01)
             else:
                 motor_current = self._motor_client.read_pos_vel_cur()[2]
             if as_dict:
@@ -372,9 +377,10 @@ class OrcaHand:
         self.enable_torque()
         self.set_control_mode(self.control_mode)
         self.set_max_current(self.max_current)
+        self._motor_client.write_desired_pos(self.motor_ids, np.array([pos for _, pos in self.neutral_position.items()]) * self._motor_client._pos_scale)
         
-        self._compute_wrap_offsets_dict()
-        self.set_joint_pos(self.neutral_position)
+        # self._compute_wrap_offsets_dict()
+        # self.set_joint_pos(self.neutral_position)
 
     def is_calibrated(self, verbose: bool = False) -> bool:
         """Check if the hand is calibrated.
@@ -418,6 +424,109 @@ class OrcaHand:
                 print(msg)
         
         return overall_calibrated
+
+    def calibrate(self, blocking: bool = True):
+        if blocking:
+            self._calibrate()
+        else:
+            self._start_task(self._calibrate)
+
+    def _calibrate(self):
+            
+        # Store the min and max values for each motor
+        motor_limits = self.motor_limits_dict.copy()
+
+        self._compute_wrap_offsets_dict()
+        for step in self.calib_sequence:
+            for joint in step["joints"].keys():
+                motor_id = self.joint_to_motor_map[joint]
+                motor_limits[motor_id] = [None, None]
+                self._wrap_offsets_dict[motor_id] = 0.0
+
+        # Set calibration control mode
+        self.set_control_mode('current_based_position')
+        self.set_max_current(self.calib_current)
+        self.enable_torque()
+        
+        for step in self.calib_sequence:
+            if self._task_stop_event.is_set():
+                return
+
+            desired_increment, motor_reached_limit, directions, position_buffers, motor_reached_limit, calibrated_joints, position_logs, current_log = {}, {}, {}, {}, {}, {}, {}, {}
+
+            for joint, direction in step["joints"].items(): 
+                if self._task_stop_event.is_set():
+                    return
+
+                if joint == 'wrist':
+                    self.set_max_current(self.wrist_calib_current)
+                else:
+                    self.set_max_current(self.calib_current)
+                    
+                motor_id = self.joint_to_motor_map[joint]
+                sign = 1 if direction == 'flex' else -1
+                if self.joint_inversion_dict.get(joint, False):
+                    sign = -sign
+                directions[motor_id] = sign
+                position_buffers[motor_id] = deque(maxlen=self.calib_num_stable)
+                position_logs[motor_id] = []
+                current_log[motor_id] = []
+                motor_reached_limit[motor_id] = False
+            
+            while(not all(motor_reached_limit.values()) and not self._task_stop_event.is_set()):               
+                for motor_id, reached_limit in motor_reached_limit.items():
+                    if not reached_limit:
+                        desired_increment[motor_id] = directions[motor_id] * self.calib_step_size
+
+                self._set_motor_pos(desired_increment, rel_to_current=True)
+                time.sleep(self.calib_step_period)
+                curr_pos = self.get_motor_pos()
+                
+                for motor_id in desired_increment.keys():
+                    if not motor_reached_limit[motor_id]:
+                        position_buffers[motor_id].append(curr_pos[self.motor_id_to_idx_dict[motor_id]])
+                        position_logs[motor_id].append(float(curr_pos[self.motor_id_to_idx_dict[motor_id]]))
+                        current_log[motor_id].append(float(self.get_motor_current()[self.motor_id_to_idx_dict[motor_id]]))
+
+                        # Check if buffer is full and all values are close
+                        if len(position_buffers[motor_id]) == self.calib_num_stable and np.allclose(position_buffers[motor_id], position_buffers[motor_id][0], atol=self.calib_threshold):
+                            motor_reached_limit[motor_id] = True
+                            # disable torque for the motor
+                            if 'wrist' in joint or 'abd' in joint:
+                                avg_limit = float(np.mean(position_buffers[motor_id]))
+                            else:
+                                self.disable_torque([motor_id])
+                                time.sleep(0.05)
+                                avg_limit = float(self.get_motor_pos()[self.motor_id_to_idx_dict[motor_id]])
+                            print(f"Motor {motor_id} corresponding to joint {self.motor_to_joint_dict[motor_id]} reached the limit at {avg_limit} rad.")
+                            if directions[motor_id] == 1:
+                                motor_limits[motor_id][1] = avg_limit
+                            if directions[motor_id] == -1:
+                                motor_limits[motor_id][0] = avg_limit
+                            self.enable_torque([motor_id])
+                
+            # find ratios of all motors that have been calibrated in this step
+            for joint, direction in step["joints"].items(): 
+                motor_id = self.joint_to_motor_map[joint]
+                if motor_limits[motor_id][0] is None or motor_limits[motor_id][1] is None:
+                    continue
+                delta_motor = motor_limits[motor_id][1] - motor_limits[motor_id][0]
+                delta_joint = self.joint_roms_dict[self.motor_to_joint_dict[motor_id]][1] - self.joint_roms_dict[self.motor_to_joint_dict[motor_id]][0]
+                self.joint_to_motor_ratios_dict[motor_id] = float(delta_motor / delta_joint) # motor ang => joint ang
+                print("Joint calibrated: ", joint)
+                calibrated_joints[joint] = 0.0
+  
+            update_yaml(self.calib_path, 'joint_to_motor_ratios', self.joint_to_motor_ratios_dict)
+            update_yaml(self.calib_path, 'motor_limits', motor_limits)
+            self.motor_limits_dict = motor_limits
+            if calibrated_joints:
+                self.set_joint_pos(calibrated_joints, num_steps=25, step_size=0.001)
+            time.sleep(0.1)    
+            
+        self.calibrated = self.is_calibrated()
+        update_yaml(self.calib_path, 'calibrated', self.calibrated)
+        self.set_joint_pos(calibrated_joints, num_steps=25, step_size=0.001)
+        self.set_max_current(self.max_current)
 
     def _compute_wrap_offsets_dict(self):
         """Read motor_pos positions once and figure out ±1-turn offsets so that

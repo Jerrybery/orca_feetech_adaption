@@ -151,6 +151,21 @@ class FeetechClient:
             address=ADDR_PRESENT_POSITION,
             size=LEN_PRESENT_POSITION,
         )
+
+        self._velocity_reader = FeetechVelocityReader(
+            self,
+            self.motor_ids,
+            address=ADDR_PRESENT_VELOCITY,
+            size=LEN_PRESENT_VELOCITY,
+        )
+        
+        self._acceleration_reader = FeetechAccelerationReader(
+            self,
+            self.motor_ids,
+            address=ADDR_MOVING_ACCELERATION,
+            size=LEN_MOVING_ACCELERATION,
+        )
+
         self._current_reader = FeetechCurrentReader(
             self,
             self.motor_ids,
@@ -220,6 +235,9 @@ class FeetechClient:
             retry_interval: The number of seconds to wait between retries.
         """
         remaining_ids = list(motor_ids)
+        # cur_pos = self.ft.GroupSyncRead(remaining_ids, [1]*len(remaining_ids), ADDR_TORQUE_ENABLE, LEN_TORQUE_ENABLE)
+        # self.sync_write(remaining_ids, cur_pos, ADDR_GOAL_POSITION, LEN_GOAL_POSITION) # Goal position for feetech
+
         if enabled:
             self.sync_write(remaining_ids, [1]*len(remaining_ids), ADDR_TORQUE_ENABLE, LEN_TORQUE_ENABLE) # Torque for feetech
         else:
@@ -256,6 +274,11 @@ class FeetechClient:
         """Reads and returns the present position for each motor (in radians)."""
         return self._position_reader.read()
 
+    def write_pos_with_int(self, motor_ids: Sequence[int],
+                           positions: np.ndarray):
+        times = self.sync_write(motor_ids, positions, ADDR_GOAL_POSITION, LEN_GOAL_POSITION) 
+        return times
+
 
 
     def write_desired_pos(self, motor_ids: Sequence[int],
@@ -270,8 +293,10 @@ class FeetechClient:
 
         # Convert to Feetech position space.
         positions = positions / self._pos_scale
-        self.sync_write(motor_ids, [150]*len(motor_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
-        self.sync_write(motor_ids, [150]*len(motor_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
+        self.sync_write(motor_ids, [250]*len(motor_ids), ADDR_MOVING_VELOCITY, LEN_MOVING_VELOCITY) # Vel for feetech
+        # print(self._position_reader.read())
+        # print(self._velocity_reader.read())
+        self.sync_write(motor_ids, [250]*len(motor_ids), ADDR_MOVING_ACCELERATION, LEN_MOVING_ACCELERATION) # Acc for feetech
 
 
         times = self.sync_write(motor_ids, positions, ADDR_GOAL_POSITION, LEN_GOAL_POSITION) 
@@ -280,11 +305,6 @@ class FeetechClient:
     def write_desired_current(self, motor_ids: Sequence[int], current: np.ndarray):
         assert len(motor_ids) == len(current)
         self.sync_write(motor_ids, current, ADDR_GOAL_CURRENT, LEN_GOAL_CURRENT)
-
-    def write_profile_velocity(self, motor_ids: Sequence[int], profile_velocity: np.ndarray):
-            assert len(motor_ids) == len(profile_velocity)
-
-            self.sync_write(motor_ids, profile_velocity, ADDR_PROFILE_VELOCITY, LEN_PROFILE_VELOCITY)
 
     def write_byte(
             self,
@@ -483,15 +503,56 @@ class FeetechPosReader(FeetechReader):
     
     def _initialize_data(self):
         # We'll store one float per motor for the position values.
+        self._pos_data_motor = np.zeros(len(self.motor_ids), dtype=np.float32)
         self._pos_data = np.zeros(len(self.motor_ids), dtype=np.float32)
 
     def _update_data(self, index: int, motor_id: int):
         # 4096 => 2 pi
         raw_val = self.operation.getData(motor_id, self.address, self.size)
-        self._pos_data[index] = float(raw_val) * self.client._pos_scale
+        self._pos_data_motor[index] = float(raw_val)
+        self._pos_data[index] = float(raw_val) * self.client._pos_scale # in rad
 
     def _get_data(self):
         return self._pos_data.copy()
+    
+    def _get_real_pos(self): 
+        for index, motor_id in enumerate(self.motor_ids):
+            try:
+                self._update_data(index, motor_id)
+            except Exception as e:
+                logging.error(f'Error updating data for motor {motor_id}: {e}')
+        '''Return the pos in motor space'''
+        return self._pos_data_motor.copy()
+
+class FeetechVelocityReader(FeetechReader):
+    """Reads present velocity (2 bytes) for each Feetech motor."""
+    
+    def _initialize_data(self):
+        # We'll store one float per motor for the velocity values.
+        self._vel_data = np.zeros(len(self.motor_ids), dtype=np.float32)
+
+    def _update_data(self, index: int, motor_id: int):
+        # The raw value from the control table is 1 byte = 1 degree Celsius.
+        raw_val = self.operation.getData(motor_id, self.address, self.size)
+        self._vel_data[index] = float(raw_val) * self.client._vel_scale # in rad/s
+
+    def _get_data(self):
+        return self._vel_data.copy()
+    
+class FeetechAccelerationReader(FeetechReader):
+    """Reads present acceleration (2 bytes) for each Feetech motor."""
+    
+    def _initialize_data(self):
+        # We'll store one float per motor for the acceleration values.
+        self._acc_data = np.zeros(len(self.motor_ids), dtype=np.float32)
+
+    def _update_data(self, index: int, motor_id: int):
+        # The raw value from the control table is 1 byte = 1 degree Celsius.
+        raw_val = self.operation.getData(motor_id, self.address, self.size)
+        self._acc_data[index] = float(raw_val)  
+
+    def _get_data(self):
+        return self._acc_data.copy()
 
 class FeetechCurrentReader(FeetechReader):
     """Reads present current (2 bytes) for each Feetech motor."""
