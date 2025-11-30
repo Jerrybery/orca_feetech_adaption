@@ -1,0 +1,169 @@
+version: 0.2.1
+baudrate: 1000000
+port: /dev/ttyUSB0 # linux
+# port: /dev/tty.usbserial-FT9MISJT # mac
+max_current: 400
+
+type: left
+
+# current, velocity, position, multi-turn- position, current_based_position
+control_mode: position
+
+motor_ids: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
+joint_ids: [thumb_mcp, thumb_abd, thumb_pip, thumb_dip, index_abd, index_mcp, index_pip, middle_abd, middle_mcp, middle_pip, ring_abd, ring_mcp, ring_pip, pinky_abd, pinky_mcp, pinky_pip]
+
+# Which motor ID is physically connected to which joint
+joint_to_motor_map:
+  thumb_mcp: -6  # FIXED
+  thumb_abd: -5 # FIXED
+  thumb_pip: -8 # FIXED
+  thumb_dip: -7 # FIXED
+  index_abd: 14
+  index_mcp: -15
+  index_pip: -16
+  middle_abd: -13
+  middle_mcp: -1 # FIXED
+  middle_pip: -9
+  ring_abd: -4 # FIXED
+  ring_mcp: -2 # FIXED
+  ring_pip: -3 # FIXED
+  pinky_abd: 12
+  pinky_mcp: -10
+  pinky_pip: -11
+ 
+joint_roms:
+  thumb_mcp: [-50, 50]
+  thumb_abd: [-20, 42]
+  thumb_pip: [-12, 108]
+  thumb_dip: [-20, 112]
+  index_abd: [-37, 37]
+  index_mcp: [-20, 95]
+  index_pip: [-20, 108]
+  middle_abd: [-37, 37]
+  middle_mcp: [-20, 91]
+  middle_pip: [-20, 107]
+  ring_abd: [-37, 37]
+  ring_mcp: [-20, 91]
+  ring_pip: [-20, 107]
+  pinky_abd: [-37, 37]
+  pinky_mcp: [-20, 98]
+  pinky_pip: [-20, 108]
+
+neutral_position:
+  1: 758
+  2: 1149
+  3: 2071
+  4: 243
+  5: 3249
+  6: 1463
+  7: 831
+  8: 928
+  9: 3309
+  10: 2390
+  11: 3125
+  12: 1667
+  13: 2285
+  14: 2976
+  15: 1652
+  16: 3547
+
+calib_current: 350
+calib_step_size: 1
+calib_step_period: 0.01
+calib_num_stable: 200  # should be period * num_stable > 1
+calib_threshold: 0.1
+
+calib_sequence:
+  - step: 1
+    joints:
+      thumb_mcp: flex
+  - step: 2
+    joints:
+      thumb_mcp: extend
+  - step: 3
+    joints:
+      thumb_abd: flex
+  - step: 4
+    joints:
+      thumb_abd: extend
+  - step: 5
+    joints:
+      thumb_pip: flex
+  - step: 6
+    joints:
+      thumb_pip: extend
+  - step: 7
+    joints:
+      thumb_dip: flex
+  - step: 8
+    joints:
+      thumb_dip: extend
+  - step: 9
+    joints:
+      index_abd: flex
+      middle_abd: flex
+      ring_abd: flex
+      pinky_abd: flex
+  - step: 10
+    joints:
+      index_abd: extend
+      middle_abd: extend
+      ring_abd: extend
+      pinky_abd: extend
+  - step: 11
+    joints:
+      index_mcp: flex
+  - step: 12
+    joints:
+      index_mcp: extend
+  - step: 13
+    joints:
+      index_pip: flex
+  - step: 14
+    joints:
+      index_pip: extend
+  - step: 15
+    joints:
+      middle_mcp: flex
+  - step: 16
+    joints:
+      middle_mcp: extend
+  - step: 17
+    joints:
+      middle_pip: flex
+  - step: 18
+    joints:
+      middle_pip: extend
+  - step: 19
+    joints:
+      ring_mcp: flex
+  - step: 20
+    joints:
+      ring_mcp: extend
+  - step: 21
+    joints:
+      ring_pip: flex
+  - step: 22
+    joints:
+      ring_pip: extend
+  - step: 23
+    joints:
+      pinky_mcp: flex
+  - step: 24
+    joints:
+      pinky_mcp: extend
+  - step: 25
+    joints:
+      pinky_pip: flex
+  - step: 26
+    joints:
+      pinky_pip: extend
+
+# calib_sequence:
+#   - step: 1
+#     joints:
+#       pinky_pip: flex
+#   - step: 2
+#     joints:
+#       pinky_pip: extend
+    

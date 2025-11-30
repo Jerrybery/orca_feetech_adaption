@@ -1,0 +1,48 @@
+version: 0.2.1
+baudrate: 3000000
+port: /dev/ttyUSB0 # linux
+# port: /dev/tty.usbserial-FT9MISJT # mac
+max_current: 400
+
+motor: "feetech"
+
+type: right
+
+# current, velocity, position, multi-turn- position, current_based_position
+control_mode: current_based_position
+
+motor_ids: [1]
+joint_ids: [thumb_pip]
+
+# Which motor ID is physically connected to which joint
+joint_to_motor_map:
+  thumb_pip: -1
+
+joint_roms:
+  thumb_pip: [-12, 108]
+
+neutral_position:
+  thumb_pip: 33
+
+calib_current: 350
+calib_step_size: 0.1
+calib_step_period: 0.001
+calib_num_stable: 10  # should be period * num_stable > 1
+calib_threshold: 0.01
+
+calib_sequence:
+  - step: 1
+    joints:
+      thumb_pip: flex
+  - step: 2
+    joints:
+      thumb_pip: extend
+
+# calib_sequence:
+#   - step: 1
+#     joints:
+#       pinky_pip: flex
+#   - step: 2
+#     joints:
+#       pinky_pip: extend
+    

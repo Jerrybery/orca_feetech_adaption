@@ -122,9 +122,6 @@ dmypy.json
 urdf/
 
 dev_scripts/
-
-orca_core/models/*
-
 # macOS
 .DS_Store
 
